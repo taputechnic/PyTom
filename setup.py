@@ -5,8 +5,8 @@ from setuptools.command.develop import develop
 import subprocess
 import sys
 import pathlib
-from pytom import __version__
-
+import shutil
+###from pytom import __version__
 
 def find_executables():
     bin_folder = pathlib.Path('pytom/bin')
@@ -16,7 +16,7 @@ def find_executables():
 
 
 def compile_pytom(miniconda_dir):
-    install_command = f'{sys.executable} compile.py --target all'
+    install_command = f'{sys.executable} compile.py --target all --includeDir /usr/include/boost $CONDA_PREFIX/lib/python3.7/site-packages/numpy/core/include/numpy $CONDA_PREFIX/include/python3.7m'
     if miniconda_dir.exists():
         install_command += f' --minicondaEnvDir {miniconda_dir}'
     process = subprocess.Popen(install_command, shell=True, cwd="pytom/pytomc")
@@ -25,31 +25,42 @@ def compile_pytom(miniconda_dir):
 
 class PyTomInstaller(install):
     def run(self):
-        compile_pytom(pathlib.Path(self.prefix))
+        prefix = self.prefix if self.prefix is not None else sys.prefix
+        compile_pytom(pathlib.Path(prefix))
+        ###compile_pytom(pathlib.Path(sys.prefix))
         install.run(self)
 
 
 class PyTomDeveloper(develop):
     def run(self):
-        compile_pytom(pathlib.Path(self.prefix))
+        prefix = self.prefix if self.prefix is not None else sys.prefix
+        compile_pytom(pathlib.Path(prefix))
+        ###compile_pytom(pathlib.Path(sys.prefix))
         develop.run(self)
 
         """Hacky solution, but we cannot rely on the script linking of pip in develop-mode. Pip will put scripts in the 
         miniconda bin that have a different shebang than the original ones. However, we need the pytom shebang for GPU 
         scripts to execute. Only then is the GPU environment variable properly set. Updating gpu code to the cupy 
         advised agnostic setup (as put in PyTomPrivate issue #117) should also solve this."""
-        miniconda_bin = pathlib.Path(self.prefix)
+        prefix = self.prefix if self.prefix is not None else sys.prefix
+        miniconda_bin = pathlib.Path(prefix)
+        ###miniconda_bin = pathlib.Path(self.prefix)
         scripts = find_executables()
+        prefix_path = pathlib.Path(self.prefix if self.prefix is not None else sys.prefix)
         for script in scripts:
-            script_path = pathlib.Path(script)
-            symlink_path = miniconda_bin.joinpath('bin', script_path.name)
-            symlink_path.unlink()
-            symlink_path.symlink_to(script_path.absolute())
+            src = pathlib.Path("pytom/bin") / pathlib.Path(script).name  # just the file name
+            dst = prefix_path / "bin" / src.name
+            shutil.copy(src, dst)
 
+version = {}
+exec(
+    (pathlib.Path(__file__).parent / "pytom" / "version.py").read_text(),
+    version
+)
 
 setup(
     name='pytom',
-    version=__version__,
+    version=version["__version__"],
     packages=find_namespace_packages(include=['pytom*']),
     package_dir={'pytom': 'pytom'},
     package_data={
@@ -69,7 +80,13 @@ setup(
         'all': ['cupy', 'PyQt5', 'pyqtgraph', 'mrcfile']},
     cmdclass={'install': PyTomInstaller,
               'develop': PyTomDeveloper},
-    scripts=find_executables(),
+    #entry_points={
+        #'console_scripts': [
+            #'coords2PL = pytom.convert.coords2PL:entry_point',
+            #'pytom = pytom.cli:main',
+            #'ipytom = pytom.cli:ipytom_main',
+            #'mcoACJob = pytom.bin.mcoACJob:main',  # define main() in that file
+        #],
+    #}
     entry_points={'console_scripts': ['coords2PL.py = pytom.convert.coords2PL:entry_point']}
     )
-

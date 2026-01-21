@@ -10,36 +10,16 @@ if checkSwigVersion():
     print('Compilation of PyTom will fail otherwise!')
     sys.exit(1)
 
-if checkPythonVersion():
-    print('Your Python Version is less than 3.6.')
-    print('Please install 3.6 or newer.')
-    print('Compilation of PyTom will fail otherwise!')
-    sys.exit(1)
-
 args = sys.argv[1:]
 
 if len(args) == 0:
     help()
     sys.exit(1)
 
-[libPaths , includePaths , exePaths, pythonVersion , minicondaDir,  phony_target] = parseArguments(args)
-
-
-def check4specialchars(path):
-    special_chars = [' ', ')', '(' ]
-
-    outpath = path[:1]
-    
-    for n, char in enumerate(path[1:]):
-        if char in special_chars and path[n] != '\\':
-            outpath += "\\" + char
-        else:
-            outpath += char
-    return outpath
-
+[libPaths, includePaths, exePaths, pythonVersion, minicondaDir, phony_target] = parseArguments(args)
+###print(f"20: phony_target='{phony_target}'") ; exit()
 
 if 'LD_LIBRARY_PATH' in os.environ:
-    os.environ['LD_LIBRARY_PATH'] = check4specialchars(os.environ['LD_LIBRARY_PATH'])
     for path in os.environ['LD_LIBRARY_PATH'].split(':'):
         libPaths.append(path)
 else:
@@ -48,19 +28,17 @@ else:
     print('')
 
 if 'INCLUDE_PATH' in os.environ: # most OS does not set this, ignore the warning
-    os.environ['INCLUDE_PATH'] = check4specialchars(os.environ['INCLUDE_PATH'])
     for path in os.environ['INCLUDE_PATH'].split(':'):
         includePaths.append(path)
     
 if 'PATH' in os.environ:
-    os.environ['PATH'] = check4specialchars(os.environ['PATH'])
     for path in os.environ['PATH'].split(':'):
         exePaths.append(path)
 else:
     print('Warning: Your system does not have PATH set.')
     print('PyTom assumes this to be the standard environment variable to store system paths!')
     print('')
-
+    
 for path in libPaths:
     newPath = ''
     if '/lib' in path:
@@ -70,11 +48,7 @@ for path in libPaths:
         
     if os.path.exists(newPath):
         includePaths.append(newPath)
-
-print('exe paths:', exePaths)
-print('lib paths:', libPaths)
-print('include paths:', includePaths)
-
+    
 # prerequisites
 need_exes = ["mpic++"]
 need_headers = ["mpi.h", "Python.h", "fftw3.h","ndarrayobject.h"]
@@ -108,90 +82,154 @@ include_boost = None
 include_numpy = None
 #-------------------------
 
-# mpi_exe,mpi_exePath = find(["mpicc","mpic++","openmpic++","mpicxx-openmpi-gcc45"],exePaths)
-mpi_exe,mpi_exePath = find(["mpicc","mpic++"],exePaths)
-if mpi_exePath is None:
-    print('MPI compiler not found!')
-    exit(1)
-        
-libraryFile,lib_mpi = find("libmpi" + dynamicExtension,libPaths)
-if lib_mpi is None:
-    print('MPI library path not found!')
-    exit(1)
+def check_lib(searchItem, searchDescription, pathList, flag, msg_list, do_continue, debug=False):
+    """
+    Parameters:
+      searchItems : can be string or list
+      searchDescription
+      pathList
+      flag : to specify on the command line
+        "PATH" is a special value
+      msg_list
+      do_continue
+      debug : prints inputs, results, and then exists
+      
+    Returns:
+      msg_list
+      do_continue
+    """
     
-includeFile,include_mpi = find("mpi.h",includePaths)
-if include_mpi is None:
-    print('MPI include path not found!')
-    exit(1)
+    executable, exePath = find(searchItem, pathList)
+    if exePath is None:
+        if flag == "PATH":
+          msg_list.append(f"{searchDescription} : locate {searchItem}, and add path to $PATH variable")
+        else:
+          msg_list.append(f"{searchDescription} : locate {searchItem}, and specify path with flag '{flag} <path>'")
+        do_continue=False  # exit(1)
+    
+    if debug:
+        print()
+        print(f"Inputs:")
+        print(f"  searchItem: '{searchItem}'")
+        print(f"  searchDescription: '{searchDescription}'")
+        print(f"  flag: '{flag}'")
+        print(f"Results:")
+        print(f"  executable: '{executable}'")
+        print(f"  exePath: '{exePath}'")
+        if len(msg_list) >= 1: print(f"  msg_list: '{msg_list[-1]}'")
+        print(f"  do_continue: '{do_continue}'")
+        exit()
+    
+    return executable, exePath, msg_list, do_continue
 
-if 0 and include_python is None:
-    try:
-        import numpy
-        p = numpy.__path__[0].split('lib')[0]
-        for a in range(3):
+# initialize
+msg_list=[]
+do_continue= True  
 
-            if [os.path.join(p,d) for d in os.listdir(p) if d == 'include' and os.path.isdir(d)]:
-                import glob
-                inc = os.path.join(p,'include')
-                a = glob.glob(f'{inc}/Python.h') + glob.glob(f'{inc}/*/Python.h')
-
-                if a:
-                    inc = os.path.dirname(a[0])
-                    includePaths = [inc] + includePaths
-                    print(includePaths)
-                    break
-
-            p = os.path.dirname(p)
-
-        includeFile, include_python = find("Python.h", includePaths, required=f'python{pythonVersion}')
-    except:
-        pass
-
-includeFile,include_python = find("Python.h",includePaths, required=f'python{pythonVersion}')
-if include_python is None:
-    print('Python include path not found!')
-    exit(1)
+mpi_exe, mpi_exePath, msg_list, do_continue= check_lib(
+  ["mpicc","mpic++","openmpic++","mpicxx-openmpi-gcc45"],
+  'MPI compiler path',
+  exePaths,
+  "PATH",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
+        
+libraryFile, lib_mpi, msg_list, do_continue= check_lib(
+  "libmpi" + dynamicExtension,
+  'MPI library path',
+  libPaths,
+  "--libDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
+    
+includeFile, include_mpi, msg_list, do_continue= check_lib(
+  "mpi.h",
+  'MPI include path',
+  includePaths,
+  "--includeDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
+    
+includeFile, include_python, msg_list, do_continue= check_lib(
+  "Python.h",
+  'Python include path',
+  includePaths,
+  "--includeDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
 
 if pythonVersion == '':
-    [lib_python, lib_pythonFlag] = adjustLibraryVersions("libpython",['2.6','2.5','2.7', '3.7'],'lpython',dynamicExtension,libPaths)
+    [lib_python, lib_pythonFlag] = adjustLibraryVersions("libpython",['2.6','2.5','2.7'],'lpython',dynamicExtension,libPaths)
 else:
-    libraryFile,lib_python      = find("libpython" + pythonVersion + dynamicExtension,libPaths)
+    libraryFile, lib_python      = find("libpython" + pythonVersion + dynamicExtension,libPaths)
     lib_pythonFlag  = 'lpython' + pythonVersion
     
-includeFile,include_fftw = find("fftw3.h",includePaths)
-    
-if include_fftw is None:
-    print('FFTW include path not found!')
-    exit(1)
+includeFile, include_fftw, msg_list, do_continue= check_lib(
+  "fftw3.h",
+  'FFTW include path',
+  includePaths,
+  "--includeDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
 
-libraryFile, lib_fftw = find("libfftw3"+ dynamicExtension, libPaths)
+libraryFile, lib_fftw, msg_list, do_continue= check_lib(
+  "libfftw3" + dynamicExtension,
+  'FFTW library path',
+  libPaths,
+  "--libDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
 
-if lib_fftw is None:
-    print('FFTW library path not found!')
-    exit(1)
-
-includeFile,include_boost = find("type_traits.hpp",includePaths) 
-if include_boost is None:
-    print('Boost include path not found!')
-    exit(1)
+#includeFile, include_boost = find("type_traits.hpp",includePaths) 
+includeFile, include_boost, msg_list, do_continue= check_lib(
+  "type_traits.hpp",
+  'Boost include path',
+  includePaths,
+  "--includeDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
     
 if include_boost:
     include_boost = os.path.abspath(os.path.join(include_boost, os.pardir)) + os.sep
 
-includeFile,include_numpy = find("ndarrayobject.h",includePaths)    
-if include_numpy is None:
-    try:
-        import numpy
-        path = numpy.get_include()
-        includePaths = [path] + includePaths
-        includeFile,include_numpy = find("ndarrayobject.h",includePaths)    
-    except Exception as e:
-        print(e)
-        pass
-if include_numpy is None:
-    print('Numpy include path not found!')
-    exit(1)
+includeFile, include_numpy, msg_list, do_continue= check_lib(
+  "ndarrayobject.h",
+  'Numpy include path',
+  includePaths,
+  "--includeDir",
+  msg_list,
+  do_continue,
+  #debug=True
+  )
+    
+# Print summary
+if not do_continue:
+  print("\nERROR!! The following dependencies were not found!")
+  for curr_msg in msg_list:
+    print(f"  {curr_msg}")
+  
+  print("Exiting...\n")
+  exit(1)
 
+#includeFile, include_boost = find("type_traits.hpp",includePaths) 
+if include_boost is None:
+    msg_list.append('Boost include path not found!')
+    do_continue=False  # exit(1)
+    
 setenv_line     = ""
 setflags_line   = "export PYTOMC_DIR='" + os.getcwd() +"'" 
 setflags_line   += " && export LDFLAGS_ADDITIONAL='-D_GLIBCXX_DEBUG'"
@@ -248,17 +286,17 @@ print("OpenMPI    - mpic++: "+str(mpi_exe))
 print("OpenMPI    - libmpi: "+str(lib_mpi))
 print("OpenMPI    - include_mpi: "+str(include_mpi))
 print("Numpy      - include_numpy: "+str(include_numpy))
-print('Boost     - include_boost: ' + str(include_boost))
+print('Boost      - include_boost: ' + str(include_boost))
 
 print('')
 print('Flags determined: ')
 print(setflags_line)
 print('')
 
-nosh       = False # you can choose not to compile the SH Alignment library
-nompi4py   = False  # you can choose not to compile the mpi4py library
-nonfft     = False  # you can choose not to compile the NFFT library
-novoltools = True
+nosh = False # you can choose not to compile the SH Alignment library
+nompi4py = False # you can choose not to compile the mpi4py library
+nonfft = False # you can choose not to compile the NFFT library
+novoltools = False
 
 
 if phony_target == "swig":
@@ -300,9 +338,9 @@ if nosh is False:
     try:
         print()
         print("############ Start to compile the SH Alignment Library ############")
-        print(pythonVersion)
+        print()
         from sh_alignment.compile import compile
-        sh_ld_library_paths, sh_python_paths = compile(include_path=includePaths, library_path=libPaths, python_version='python'+pythonVersion + ('m' if pythonVersion == '3.7' else ''))
+        sh_ld_library_paths, sh_python_paths = compile(include_path=includePaths, library_path=libPaths, python_version='python'+pythonVersion)
         sh_ld_library_paths = sh_ld_library_paths.split(':')
         sh_python_paths = sh_python_paths.split(':')
     except Exception as e:
@@ -319,12 +357,12 @@ if nompi4py is False:
         print()
         mpicc_exe, mpicc_exePath = find("mpicc", exePaths)
         mpicc_exe = mpicc_exePath + '/' + mpicc_exe
-        # os.system("cd ../external/src/mpi4py/ && python"+str(pythonVersion)+" setup.py build --mpicc="+mpicc_exe)
-        # os.system("cd ../external/src/mpi4py/ && python"+str(pythonVersion)+" setup.py install --prefix=../../")
+        os.system("cd ../external/src/mpi4py/ && python"+str(pythonVersion)+" setup.py build --mpicc="+mpicc_exe)
+        os.system("cd ../external/src/mpi4py/ && python"+str(pythonVersion)+" setup.py install --prefix=../../")
         print()
         # add into the path
-        path1 = os.path.abspath(os.path.join(minicondaDir, 'lib/'))
-        path2 = os.path.abspath(os.path.join(minicondaDir, '/external/lib/python'+str(pythonVersion)+'/site-packages/'))
+        path1 = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + '/external/lib/'
+        path2 = os.path.abspath(os.path.join(os.getcwd(), os.pardir)) + '/external/lib/python'+str(pythonVersion)+'/site-packages/'
         if sh_python_paths is None:
             sh_python_paths = [path1, path2]
         elif sh_python_paths.__class__ == list:
@@ -369,21 +407,8 @@ if nonfft is False:
         print()
         print("############ Start to compile NFFT Library ############")
         print()
-
-        extra = '' 
-        if minicondaDir:
-            import os
-            tt= '../external/src/nfft-3.1.3/include/fftw3.h'
-            if os.path.exists(tt):
-                os.system(f'unlink {tt}')
-                
-            os.system(f'ln -s {minicondaDir}/include/fftw3.h {tt}')
-            extra = f" export C_INCLUDE_PATH='{minicondaDir}/include'  &&" 
-        
         install_path = os.path.abspath(os.path.join(os.getcwd(), os.pardir))+"/external/"
-        os.system(f"cd ../external/src/nfft-3.1.3/ && {extra} chmod +x ./configure && ./configure --prefix="+install_path)
-
-    
+        os.system("cd ../external/src/nfft-3.1.3/ && chmod +x ./configure && ./configure --prefix="+install_path)
         os.system("cd ../external/src/nfft-3.1.3/ && make && make install")
         print()
         # compile the swig part
@@ -403,7 +428,7 @@ if nonfft is False:
         set_flags += ' && export NFFT_LIB_PATH="%s"' % (install_path+"lib/")
         set_flags += ' && export NFFT_INCLUDE_PATH="%s"' % (install_path+"src/nfft-3.1.3/include/")
         set_flags += ' && export PYTHON_LIB_PATH="%s"' % lib_python
-        set_flags += ' && export PYTHON_VERSION="python%s"' % pythonVersion + ('m' if pythonVersion == '3.7' else '')
+        set_flags += ' && export PYTHON_VERSION="python%s"' % pythonVersion
         
         command = set_flags+" && cd nufft/ && chmod +x mkswig.sh && ./mkswig.sh"
         print(command)
@@ -423,24 +448,25 @@ if nonfft is False:
         print(e)
         print("Compilation of NFFT failed! Disable this functionality.")
 
+swig_modules = [ "_pytom_fftplan.so", "_pytom_freqweight.so",
+                 "_pytom_mpi.so", "_pytom_numpy.so", "_pytom_volume.so" ]
+so_paths = [ os.path.join("..", "lib", f) for f in swig_modules ]
 
-if os.path.isfile("../lib/_pytom_fftplan.so") \
-    and os.path.isfile("../lib/_pytom_freqweight.so") \
-    and os.path.isfile("../lib/_pytom_mpi.so") \
-    and os.path.isfile("../lib/_pytom_numpy.so") \
-    and os.path.isfile("../lib/_pytom_volume.so") \
-    and phony_target and not ('clean' in phony_target):
+if all(os.path.isfile(p) for p in so_paths) and phony_target and not ('clean' in phony_target):
     print('Generating executables:')
-    print('../bin/pytom')
-    print('../bin/ipytom')
-    print('../bin/pytomGUI')
+    print('  ../bin/pytom')
+    print('  ../bin/ipytom')
+    print('  ../bin/pytomGUI')
 
-
-    genexelibs = list(set([lib_mpi, lib_fftw, lib_python] + sh_ld_library_paths[:1]))
-    genexeincl = sh_python_paths
-
-    generateExecuteables(genexelibs, exePaths, genexeincl, python_version=pythonVersion)
-
-    if minicondaDir:
-        print('link c-libs')
-        os.system(f'cp ../lib/lib*.so {minicondaDir}/lib')
+    generateExecuteables([lib_mpi,lib_fftw,lib_python]+sh_ld_library_paths,exePaths,sh_python_paths,python_version=pythonVersion)
+else:
+    reason_list=[]
+    if not phony_target:
+        if not ('clean' in phony_target):
+            reason_list+=f"  No target specified"
+        else:
+            reason_list+=f"  'clean' target specified"
+    for p in so_paths:
+        if not os.path.isfile(p): reason_list+=f"  {p} doesn't exist"
+    print("Not generating executables for the following reason(s):")
+    for r in reason_list: print(r)
